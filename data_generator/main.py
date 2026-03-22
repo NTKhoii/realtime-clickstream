@@ -54,9 +54,7 @@ def run_producer():
         with producer:
             while True:
                 event_data_batch = producer.create_batch()
-                
-                # Tạo 5-15 events trong 1 giây để mô phỏng lượng truy cập
-                events_per_second = random.randint(5, 15)
+                events_per_second = random.randint(50, 100)
                 
                 for _ in range(events_per_second):
                     event = generate_clickstream_event()

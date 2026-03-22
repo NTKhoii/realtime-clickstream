@@ -1,0 +1,16 @@
+services:
+  metabase:
+    image: metabase/metabase:latest
+    container_name: metabase_dashboard
+    ports:
+      - "3000:3000"
+    volumes:
+      # Ánh xạ thư mục ảo để giữ lại các Dashboard em đã vẽ dù có tắt máy
+      - metabase_data:/metabase-data
+    environment:
+      # Khai báo cho Metabase biết nơi lưu file cấu hình
+      - MB_DB_FILE=/metabase-data/metabase.db
+    restart: unless-stopped # Tự động chạy lại nếu lỡ sập hoặc khởi động lại máy
+
+volumes:
+  metabase_data:
