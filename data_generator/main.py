@@ -7,6 +7,7 @@ from datetime import datetime, timezone, timedelta
 from faker import Faker
 from dotenv import load_dotenv
 from azure.eventhub import EventHubProducerClient, EventData
+
 load_dotenv()
 fake = Faker()
 
@@ -36,7 +37,7 @@ ACTION_WEIGHTS = [0.8, 0.15, 0.05]
 # ==============================
 
 active_sessions = {}
-MAX_SESSIONS = 5000 # Giới hạn RAM
+MAX_SESSIONS = 5000  # Giới hạn RAM
 
 def get_or_create_session():
     """Maintain user-session state without leaking memory"""
@@ -188,25 +189,21 @@ def run_producer():
                     if event is None:
                         continue  # simulate dropped events
 
+                    # Chỉ parse chuỗi, không lấy partition_key nữa
                     if isinstance(event, dict):
                         payload = json.dumps(event)
-                        partition_key = event.get("user_id", None)
                     else:
                         payload = event
-                        partition_key = None
 
                     try:
-                        event_data_batch.add(
-                            EventData(payload, partition_key=partition_key)
-                        )
+                        # Bỏ argument partition_key đi
+                        event_data_batch.add(EventData(payload))
                         sent_count += 1
-                    except Exception:
+                    except ValueError: # SDK của Azure trả về ValueError khi Batch bị đầy
                         # batch full → gửi rồi tạo batch mới
                         producer.send_batch(event_data_batch)
                         event_data_batch = producer.create_batch()
-                        event_data_batch.add(
-                            EventData(payload, partition_key=partition_key)
-                        )
+                        event_data_batch.add(EventData(payload))
                         sent_count += 1
 
                 producer.send_batch(event_data_batch)
