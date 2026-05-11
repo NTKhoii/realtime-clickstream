@@ -24,25 +24,80 @@ The architecture follows the **Medallion Data Lakehouse** pattern (Bronze -> Sil
 
 ## 🧠 Key Data Engineering Techniques Implemented
 
-### 1. Spark Structured Streaming & Delta Lake
+### 1. Data Simulation and Ingestion Methods
 
-* Replaced traditional batch processing with Continuous Streaming.
-* Utilized Delta Lake `_delta_log` for ACID transactions, preventing data corruption during streaming interruptions.
-* Implemented Checkpointing to ensure exactly-once semantics and fault tolerance.
+#### **Realistic Clickstream Event Generation**
+The project implements a sophisticated data generator that simulates realistic e-commerce user behavior with stateful session management, behavior-driven action flows, and intentional dirty data injection to test data quality pipelines.
 
-### 2. Medallion Architecture Implementation
+**Key Techniques:**
+- **Stateful Session Management** with Garbage Collection: Maintains up to 5,000 active user sessions in-memory, automatically evicting oldest sessions to prevent memory leaks while creating realistic user journeys.
+- **Behavior-Driven Action Flows**: Implements state-machine logic where user actions follow realistic patterns (70% continue browsing after viewing, 30% add to cart; 40% checkout after adding to cart).
+- **Late Event Injection**: Simulates real-world network delays with 75% on-time events and 25% late arrivals (up to 30 seconds) to test watermarking capabilities.
+- **Intentional Dirty Data Injection** (5% error rate): Tests data quality by injecting null values, invalid prices, type mismatches, and schema drift.
 
-* 🥉 **Bronze Layer (Ingestion):** Appends raw JSON payloads directly from Event Hubs.
-* 🥈 **Silver Layer (Transformation):** Unpacks JSON schemas (`from_json`), enforces data types (String to Timestamp), and filters out corrupted records (e.g., null `user_id`).
-* 🥇 **Gold Layer (Consumption):** Designed for high-performance OLAP queries using a **Star Schema** approach.
+#### **Azure Event Hubs Integration**
+Uses batching mechanism with automatic overflow handling and traffic spike simulation (50-100 events/sec normally, with occasional 3-5x multipliers) to test streaming performance during peak loads.
 
-### 3. Advanced Dimensional Modeling (SCD Type 1 & 2)
+### 2. Streaming Processing Approaches
 
-Used Spark's `foreachBatch` mechanism and Delta's `MERGE INTO` functionality to process micro-batches into the Star Schema:
+#### **Bronze Layer: Raw Ingestion with Checkpointing**
+- **Kafka Source Integration**: Connects to Azure Event Hubs using Kafka-compatible endpoints with SASL/SSL authentication.
+- **Fault-Tolerant Configuration**: `failOnDataLoss: false` gracefully handles Event Hub retention policy by continuing from latest offset.
+- **10-Second Micro-batching**: Balances latency (~10s) with throughput by processing in 10-second windows.
+- **Checkpointing**: Records offset progress in ADLS, enabling exactly-once delivery semantics and crash recovery.
 
-* **Fact Table (`fact_clickstream`):** Insert-only event records.
-* **Dimension Table (`dim_user` - SCD Type 1):** Upserts (Updates/Inserts) to keep only the latest user device/source information.
-* **Dimension Table (`dim_product` - SCD Type 2):** Tracks historical pricing changes over time by utilizing `is_current`, `valid_from`, and `valid_to` flags, enabling accurate historical revenue calculation.
+#### **Silver Layer: Data Quality & Streaming Transformations**
+- **JSON Schema Validation**: Uses `from_json` with `_corrupt_record` column to capture malformed JSON instead of failing the pipeline.
+- **Multi-condition Filtering**: Four independent validation gates (corrupt JSON, missing user_id, invalid price, bot traffic) catch 95%+ of bad records.
+- **Watermarking**: Allows 10-minute late arrivals before closing windows, critical for delayed events from slow networks.
+- **Deduplication**: Removes duplicate `event_id` records within the watermark period.
+- **Dead Letter Queue (DLQ)**: Routes bad records to a separate table with error classification for debugging and audit trails.
+
+### 3. Data Lakehouse Architecture Patterns
+
+#### **Medallion Three-Layer Architecture**
+Implements clean separation of concerns across Bronze (raw), Silver (validated), and Gold (optimized) layers using Delta Lake for ACID transactions, schema evolution, time-travel auditing, and automatic compaction.
+
+| Layer | Purpose | Schema | Access |
+|-------|---------|--------|--------|
+| **Bronze** | Preserve raw data as-is | `raw_payload`, `ingestion_timestamp` | Data engineers, debuggers |
+| **Silver** | Enforce quality & types | Parsed JSON with typed columns | Data analysts, transforms |
+| **Gold** | OLAP-optimized Star Schema | Fact + 5 Dimensions | BI tools, dashboards |
+
+### 4. Advanced Dimensional Modeling (SCD Type 1 & 2)
+
+#### **Star Schema: 1 Fact + 5 Dimensions**
+Uses Spark's `foreachBatch` mechanism and Delta's `MERGE INTO` functionality to process micro-batches into an optimized Star Schema.
+
+- **Fact Table (`fact_events`)**: Insert-only immutable event records with net revenue calculation `(price * quantity) - discount`.
+- **Dimension Users (SCD Type 1)**: Overwrite-only dimension keeping latest device/OS info, no historical tracking.
+- **Dimension Products (SCD Type 2)**: Tracks historical category changes using `is_current`, `start_date`, and `end_date` flags for accurate historical revenue calculation.
+- **Supporting Dimensions**: Date (conformed for time aggregations), Location (MD5 composite key), Sessions (marketing attribution).
+
+### 5. Spark, Delta Lake, and Azure Services Usage
+
+#### **Spark Structured Streaming Pattern**
+- **Reading**: `spark.readStream.format("kafka")` with Event Hubs integration
+- **Writing**: `writeStream.format("delta").outputMode("append")` with checkpointing
+- **foreachBatch**: Enables complex SCD logic and idempotent MERGE operations per micro-batch
+
+#### **Azure Integration**
+- **Event Hubs**: Kafka-compatible messaging with 24-hour retention and automatic partitioning
+- **ADLS Gen2**: Hierarchical storage with `abfss://` protocol for Delta Lake compatibility
+- **Databricks**: Pre-configured Spark clusters with Secret Scopes for Key Vault integration
+
+### 6. Error Handling, Fault Tolerance, and Data Quality Measures
+
+#### **Fault Tolerance Mechanisms**
+- **Checkpointing at Every Layer**: Bronze, Silver, and Gold layers maintain separate checkpoints for exactly-once semantics
+- **Delta Lake ACID Transactions**: Prevents partial writes and ensures data consistency during failures
+- **Event Hub Resilience**: Graceful handling of data loss scenarios without pipeline interruption
+
+#### **Data Quality Implementation**
+- **Multi-Layer Validation**: JSON parsing, type enforcement, and business rule validation
+- **Dead Letter Queue**: Separate stream for bad records with error classification
+- **Watermarking & Deduplication**: Handles late arrivals and prevents duplicate processing
+- **Real-time Monitoring**: DLQ analysis and BI dashboard metrics for pipeline health
 
 ## 🚀 How to Run the Project
 
